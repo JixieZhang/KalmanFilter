@@ -67,6 +67,10 @@ public:
                                   const TVTrack    &hel,
                                         Double_t    df,
                                         Double_t    mass) const;
+   virtual Double_t GetEnergyLoss_old(const TMaterial  &mat,
+                                  const TVTrack    &hel,
+                                        Double_t    df,
+                                        Double_t    mass) const;
    virtual void     CalcQms      (const TMaterial  &mat,
                                   const TVTrack    &hel,
                                         Double_t    df,

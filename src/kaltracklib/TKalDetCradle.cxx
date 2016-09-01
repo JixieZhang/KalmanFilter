@@ -188,16 +188,10 @@ void TKalDetCradle::Update()
    }
 }
 
-//_________________________________________________________________________
-// -----------------
-//  GetEnergyLoss
-// -----------------
-//    returns energy loss.
-//
-Double_t TKalDetCradle::GetEnergyLoss(const TMaterial &mat,
-                                      const TVTrack   &hel,
-                                            Double_t   df,
-                                            Double_t   mass) const
+Double_t TKalDetCradle::GetEnergyLoss_old(const TMaterial &mat,
+                                          const TVTrack   &hel,
+                                          Double_t   df,
+                                          Double_t   mass) const
 {
     Double_t cpa    = hel.GetKappa();
     Double_t tnl    = hel.GetTanLambda();
@@ -238,8 +232,11 @@ Double_t TKalDetCradle::GetEnergyLoss(const TMaterial &mat,
     : TMath::Abs(df)*cslinv;
     
     //fg: switched from using cm to mm in KalTest - material (density) and energy still in GeV and cm
-    path /= 10. ;
-    
+    //path /= 10. ;
+    //By Jixie: the energy loss of this model does not work well in RTPC
+    //protons loss too small energy 
+    path *= 1.25;  //this number is from my comparison 
+
     Double_t edep = dedx * dnsty * path;
     
     
@@ -253,6 +250,96 @@ Double_t TKalDetCradle::GetEnergyLoss(const TMaterial &mat,
     return isfwd ? (cpa > 0 ? dcpa : -dcpa) : (cpa > 0 ? -dcpa : dcpa);
 }
   
+
+//_________________________________________________________________________
+// -----------------
+//  GetEnergyLoss
+// -----------------
+//    returns energy loss.
+//the original code only work for 0.1<beta*gamma<1000, it does not include shell effect
+//which is useful for 0.1>beta*gamma, and its desity effect is doubled 
+//density effect will affect 2<beta*gamma
+//By Jixie @20160829 Update for the following: 
+//1) add a factor of 0.5 in density effect, which is useful for high energy particle
+//2) include shell effect, which is useful for low energy paricle like 50 MeV/c proton
+Double_t TKalDetCradle::GetEnergyLoss(const TMaterial &mat,
+                                      const TVTrack   &hel,
+                                            Double_t   df,
+                                            Double_t   mass) const
+{
+    Double_t cpa    = hel.GetKappa();
+    Double_t tnl    = hel.GetTanLambda();
+    Double_t tnl2   = tnl * tnl;
+    Double_t tnl21  = 1. + tnl2;
+    Double_t cslinv = TMath::Sqrt(tnl21);
+    Double_t mom2   = tnl21 / (cpa * cpa);
+    
+    // -----------------------------------------
+    // Bethe-Bloch eq. (Physical Review D P195.)
+    // -----------------------------------------
+    static const Double_t kK   = 0.307075e-3;     // [GeV*cm^2]
+    static const Double_t kMe  = 0.510998902e-3;  // electron mass [GeV]
+    
+    Double_t dnsty = mat.GetDensity();		// density
+    Double_t A     = mat.GetA();                // atomic mass
+    Double_t Z     = mat.GetZ();                // atomic number
+    //Double_t I    = Z * 1.e-8;		// mean excitation energy [GeV]
+    //Double_t I    = (2.4 +Z) * 1.e-8;		// mean excitation energy [GeV]
+    //use Sterneimer's paper
+    Double_t I    = (9.76 * Z + 58.8 * TMath::Power(Z, -0.19)) * 1.e-9;
+    if(Z<13) I    = (12 * Z + 7.) * 1.e-9;
+    Double_t hwp  = 28.816 * TMath::Sqrt(dnsty * Z/A) * 1.e-9;
+    Double_t bg2  = mom2 / (mass * mass);       //(beta*gamma)^2
+    Double_t gm2  = 1. + bg2;                   // gamma^2   
+    Double_t beta2= bg2/gm2;
+    Double_t meM  = kMe / mass;
+    //the original density effect is strange
+    Double_t x    = log10(TMath::Sqrt(bg2));
+    Double_t C0   = - (2. * log(I/hwp) + 1.);
+    Double_t a    = -C0/27.;
+    Double_t del;
+    if (x >= 3.)            del = 4.606 * x + C0;
+    else if (0.<=x && x<3.) del = 4.606 * x + C0 + a * TMath::Power(3.-x, 3.);
+    else                    del = 0.;
+    Double_t tmax = 2.*kMe*bg2 / (1. + meM*(2.*TMath::Sqrt(gm2) + meM));
+    //shell correction from Leo book P26, Eq.2.33, work only for beta*gamma>0.13
+    Double_t Iev = I*1.0e9;
+    Double_t Ce = 0;
+    if(bg2<0.0169) {
+      Double_t T = mass * (sqrt(gm2) - 1.0); //kenimatic energy T = E - M = M *(Gamma-1) 
+      Double_t pbg2 = 0.13*0.13;
+      Double_t Ce_bg0p13 = (0.422377/pbg2+0.0304043/pbg2/pbg2-0.00038106/pbg2/pbg2/pbg2)*1.e-6*Iev*Iev
+	+ (3.850190/pbg2-0.1667989/pbg2/pbg2+0.00157955/pbg2/pbg2/pbg2)*1.e-9*Iev*Iev*Iev;
+      Ce = Ce_bg0p13 * log(T/0.002) / log(0.0079/0.002);
+    }
+    else{
+       Ce = (0.422377/bg2+0.0304043/bg2/bg2-0.00038106/bg2/bg2/bg2)*1.e-6*Iev*Iev
+	+ (3.850190/bg2-0.1667989/bg2/bg2+0.00157955/bg2/bg2/bg2)*1.e-9*Iev*Iev*Iev;
+    }
+    Double_t dedx = kK * Z/A / beta2 * (0.5*log(2.*kMe*bg2*tmax / (I*I))
+                                          - beta2 - 0.5*del - Ce/Z);
+    
+    Double_t path = hel.IsInB()
+    ? TMath::Abs(hel.GetRho()*df)*cslinv
+    : TMath::Abs(df)*cslinv;
+    
+    //By Jixie: the energy loss of this model does not work well in RTPC
+    //protons loss too small energy 
+    path *= 1.25;  //this number is from my comparison 
+
+    Double_t edep = dedx * dnsty * path;
+    
+    
+    Double_t cpaa = TMath::Sqrt(tnl21 / (mom2 + edep
+                                         * (edep + 2. * TMath::Sqrt(mom2 + mass * mass))));
+    Double_t dcpa = TMath::Abs(cpa) - cpaa;
+    
+    static const Bool_t kForward  = kTRUE;
+    static const Bool_t kBackward = kFALSE;
+    Bool_t isfwd = ((cpa > 0 && df < 0) || (cpa <= 0 && df > 0)) ? kForward : kBackward;
+    return isfwd ? (cpa > 0 ? dcpa : -dcpa) : (cpa > 0 ? -dcpa : dcpa);
+}
+
 //_________________________________________________________________________
 // -----------------
 //  CalQms
@@ -285,10 +372,7 @@ void TKalDetCradle::CalcQms(const TMaterial  &mat,
     Double_t path = hel.IsInB()
     ? TMath::Abs(hel.GetRho()*df)*cslinv
     : TMath::Abs(df)*cslinv;
-    
-    //fg: switched from using cm to mm in KalTest - material (density) and energy still in GeV and cm
-    path /= 10. ;
-    
+     
     Double_t xl   = path * x0inv;
     // ------------------------------------------------------------------
     // Very Crude Treatment!!
