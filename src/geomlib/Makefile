@@ -190,7 +190,7 @@ lib: dir $(OBJS) $(OBJDIR)/$(USERDICT).o
 			make -s -C $$model; \
 		fi; \
 	done;
-	@$(AR) -r $(LIBFILE).$(VERSION) $(OBJS) $(OTHEROBJS) &>/dev/null
+	@$(LD) $(LDFLAGS) -shared -o $(LIBFILE).$(VERSION) $(OBJS) $(OTHEROBJS) $(OBJDIR)/$(USERDICT).o &>/dev/null
 	@ln -sf $(LIBFILE).$(VERSION) $(LIBFILE)
 	@echo "Linking $(LIBFILE) ...... done!"
 
